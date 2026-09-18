@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Supabase.initialize(
+    url: 'https://vihbsfrwnslnmheowkhy.supabase.co',
+    anonKey: 'sb_publishable_HIMGxb-O6fj9O7OzT4ukuQ_jm5W8mWz',
+  );
   runApp(const AaBrowserApp());
 }
 
@@ -251,40 +256,159 @@ class _BrowserHomeState extends State<BrowserHome> {
   }
 
   Future<void> _showDailyData() async {
-    final prefs = await SharedPreferences.getInstance();
-    final today = DateTime.now().toIso8601String().substring(0, 10);
-    final claimedDate = prefs.getString('daily_claim_date');
-    final claimed = claimedDate == today;
+    final supabase = Supabase.instance.client;
+    if (supabase.auth.currentSession == null) {
+      final phone = await _askText(
+        title: 'Sign in',
+        label: 'Nigerian phone number',
+        hint: '08012345678',
+      );
+      if (phone == null || phone.trim().isEmpty) return;
+
+      try {
+        await supabase.auth.signInWithOtp(phone: phone.trim());
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not send OTP: $e')),
+          );
+        }
+        return;
+      }
+
+      if (!mounted) return;
+      final code = await _askText(
+        title: 'Enter OTP',
+        label: 'Verification code',
+        hint: '123456',
+      );
+      if (code == null || code.trim().isEmpty) return;
+
+      try {
+        await supabase.auth.verifyOTP(
+          phone: phone.trim(),
+          token: code.trim(),
+          type: OtpType.sms,
+        );
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('OTP verification failed: $e')),
+          );
+        }
+        return;
+      }
+    }
+
+    if (!mounted) return;
+    String network = 'mtn';
+    final phone = await _askNetworkAndPhone(() => network);
+    if (phone == null) return;
+
     if (!mounted) return;
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (_) => AlertDialog(
-        title: const Text('Daily 1 GB'),
-        content: Text(
-          claimed
-              ? 'Today\'s 1 GB bonus has already been claimed. This screen tracks an in-app bonus only; it does not add mobile data to your SIM.'
-              : 'Claim your daily 1 GB bonus. This is an in-app reward tracker. Actual mobile data requires a supported telecom/ISP data API or sponsored data partnership.',
+        title: const Text('Claim daily 1 GB'),
+        content: StatefulBuilder(
+          builder: (context, setDialogState) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Choose the network that matches the phone number.'),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: network,
+                items: const [
+                  DropdownMenuItem(value: 'mtn', child: Text('MTN')),
+                  DropdownMenuItem(value: 'airtel', child: Text('Airtel')),
+                  DropdownMenuItem(value: 'glo', child: Text('Glo')),
+                  DropdownMenuItem(value: '9mobile', child: Text('9mobile')),
+                ],
+                onChanged: (v) => setDialogState(() => network = v ?? 'mtn'),
+                decoration: const InputDecoration(
+                  labelText: 'Network',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text('Phone: $phone'),
+            ],
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
+            child: const Text('Cancel'),
           ),
-          if (!claimed)
-            FilledButton(
-              onPressed: () async {
-                await prefs.setString('daily_claim_date', today);
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              try {
+                final result = await supabase.functions.invoke(
+                  'claim-daily-data',
+                  body: {'phone': phone, 'network': network},
+                );
+                final data = result.data;
                 if (mounted) {
-                  Navigator.pop(context);
+                  final message = data is Map && data['message'] != null
+                      ? data['message'].toString()
+                      : 'Data claim submitted.';
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Daily 1 GB bonus claimed in the app.')),
+                    SnackBar(content: Text(message)),
                   );
                 }
-              },
-              child: const Text('Claim 1 GB'),
-            ),
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Claim failed: $e')),
+                  );
+                }
+              }
+            },
+            child: const Text('Claim 1 GB'),
+          ),
         ],
       ),
+    );
+  }
+
+  Future<String?> _askText({
+    required String title,
+    required String label,
+    required String hint,
+  }) async {
+    final controller = TextEditingController();
+    final value = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.phone,
+          decoration: InputDecoration(labelText: label, hintText: hint),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return value;
+  }
+
+  Future<String?> _askNetworkAndPhone(String Function() getNetwork) async {
+    return _askText(
+      title: 'Data phone number',
+      label: 'Phone number',
+      hint: '08012345678',
     );
   }
 
