@@ -59,7 +59,7 @@ class BrowserHome extends StatefulWidget {
 }
 
 class _BrowserHomeState extends State<BrowserHome> {
-  static const homeUrl = 'https://www.google.com/';
+  static const homeUrl = 'https://emzaro731-byte.github.io/aa/';
   final addressController = TextEditingController();
   final List<BrowserTab> tabs = [];
   List<String> history = [];
@@ -250,6 +250,44 @@ class _BrowserHomeState extends State<BrowserHome> {
     );
   }
 
+  Future<void> _showDailyData() async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    final claimedDate = prefs.getString('daily_claim_date');
+    final claimed = claimedDate == today;
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Daily 1 GB'),
+        content: Text(
+          claimed
+              ? 'Today\'s 1 GB bonus has already been claimed. This screen tracks an in-app bonus only; it does not add mobile data to your SIM.'
+              : 'Claim your daily 1 GB bonus. This is an in-app reward tracker. Actual mobile data requires a supported telecom/ISP data API or sponsored data partnership.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+          if (!claimed)
+            FilledButton(
+              onPressed: () async {
+                await prefs.setString('daily_claim_date', today);
+                if (mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Daily 1 GB bonus claimed in the app.')),
+                  );
+                }
+              },
+              child: const Text('Claim 1 GB'),
+            ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _addBookmark() async {
     final url = tab.url;
     if (!bookmarks.contains(url) && url != homeUrl) {
@@ -342,6 +380,7 @@ class _BrowserHomeState extends State<BrowserHome> {
               if (value == 'bookmarks') _showBookmarks();
               if (value == 'history') _showHistory();
               if (value == 'theme') widget.onThemeChanged();
+              if (value == 'daily') _showDailyData();
             },
             itemBuilder: (_) => [
               const PopupMenuItem(
@@ -363,6 +402,13 @@ class _BrowserHomeState extends State<BrowserHome> {
                 child: ListTile(
                   leading: Icon(Icons.history),
                   title: Text('History'),
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'daily',
+                child: ListTile(
+                  leading: Icon(Icons.data_usage),
+                  title: Text('Daily 1 GB'),
                 ),
               ),
               PopupMenuItem(
